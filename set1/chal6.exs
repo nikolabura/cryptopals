@@ -55,25 +55,46 @@ ciphertext =
     |> String.to_integer(2)
   end)
 
-# steps 1, 2, and 3 (keysize trials)
-keysize_trials =
-  Enum.map(2..min(40, div(length(ciphertext), 2)), fn keysize ->
-    a = Enum.slice(ciphertext, 0..(keysize - 1))
-    b = Enum.slice(ciphertext, keysize..(keysize * 2 - 1))
-    score = Chal6.hammingDistance(a, b) / keysize
-    %{score: Float.round(score, 4), keysize: keysize}
-  end)
-  |> Enum.sort_by(fn p -> p.score end, :desc)
+# steps 1, 2 and 3 (keysize trials)
+do_trials = true
 
-keysize_trials
-|> Enum.take(-5)
-|> IO.inspect()
+keysize =
+  if do_trials do
+    keysize_trials =
+      Enum.map(2..min(40, div(length(ciphertext), 2)), fn keysize ->
+        blocks =
+          ciphertext
+          |> Enum.chunk_every(keysize)
+          |> Enum.filter(fn c -> length(c) == keysize end)
+          |> Enum.take(70)
 
-# step 4 (choose keysize)
-# keysize = keysize_trials |> Enum.at(-1) |> Map.fetch!(:keysize)
-# IO.write("Using KEYSIZE: ")
-# IO.puts(keysize)
-keysize = 13
+        score =
+          for x <- blocks, y <- blocks, x != y do
+            Chal6.hammingDistance(x, y) / keysize
+          end
+
+        IO.write(keysize)
+        IO.write(" ")
+        score = Enum.sum(score) / length(score)
+        %{score: Float.round(score, 4), keysize: keysize}
+      end)
+      |> Enum.sort_by(fn p -> p.score end, :desc)
+
+    IO.puts("Done trialing KEYSIZE.")
+
+    keysize_trials
+    |> Enum.take(-8)
+    |> IO.inspect()
+
+    # step 4 (choose keysize)
+    keysize_trials |> Enum.at(-1) |> Map.fetch!(:keysize)
+  else
+    # hardcoded result from previously run trials
+    29
+  end
+
+IO.write("Using KEYSIZE: ")
+IO.puts(keysize)
 
 # step 5 (break into blocks)
 blocks =
@@ -96,9 +117,11 @@ blocks
     xored = Enum.map(block, fn x -> Bitwise.bxor(x, charguess) end)
     %{guess: charguess, result: xored}
   end)
-  # filter out keys which result in many non-ascii chars
+  # filter out keys which result in many non-ascii chars or in any unprintable string
   |> Enum.filter(fn g ->
-    Enum.count(g.result, fn c -> c <= 127 end) / length(g.result) > 0.5
+    ascii_good = Enum.count(g.result, fn c -> c <= 127 end) / length(g.result) > 0.5
+    print_good = String.printable?(List.to_string(g.result))
+    ascii_good and print_good
   end)
   # do the histogram
   |> Enum.map(fn g ->
@@ -123,12 +146,30 @@ blocks
       Enum.take(ordered_letter_freqs, 10)
       |> Enum.any?(fn c -> c in ~c(tT) end)
 
-    e_in_top and t_in_top
+    e_in_top or t_in_top
+    true
   end)
+  # do the "number of alphabetic chars vs number of total chars" score
   |> Enum.map(fn g ->
-    result = String.codepoints(List.to_string(Map.get(g, :result)))
-    result = Enum.filter(result, fn(p) -> String.printable?(p) end)
-    result = Enum.join(result)
-    IO.inspect(result)
+    num_alphas =
+      String.codepoints(List.to_string(g.result))
+      |> Enum.map(fn p ->
+        String.match?(p, ~r/[[:alpha:]]/)
+      end)
+      |> Enum.count(fn x -> x end)
+
+    tot_chars = length(g.result)
+    alphas_score = num_alphas / tot_chars
+    Map.put(g, :alphas_score, alphas_score)
   end)
+  |> Enum.sort_by(&Map.get(&1, :alphas_score))
+  |> Enum.map(&Map.put(&1, :result_string, List.to_string(&1.result)))
+  |> Enum.take(-1)
+  |> Enum.map(&Map.get(&1, :guess))
 end)
+|> Enum.join()
+|> (fn x ->
+      IO.write("Guessed key: ")
+      x
+    end).()
+|> IO.inspect()
